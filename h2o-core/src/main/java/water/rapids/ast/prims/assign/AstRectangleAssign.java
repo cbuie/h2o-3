@@ -18,6 +18,8 @@ import water.rapids.ast.prims.mungers.AstColSlice;
 import water.rapids.vals.ValFrame;
 
 import java.util.Arrays;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Rectangular assign into a row and column slice.  The destination must
@@ -85,7 +87,8 @@ public class AstRectangleAssign extends AstPrimitive {
           assign_frame_scalar(dst, cols, rows, vsrc.getNum(), env._ses);
           break;
         case Val.STR:
-          throw H2O.unimpl();
+          assign_frame_scalar(dst, cols, rows, vsrc.getStr(), env._ses);
+          break;
         case Val.FRM:
           throw H2O.unimpl();
         default:
@@ -285,26 +288,48 @@ public class AstRectangleAssign extends AstPrimitive {
   }
 
   // Boolean assignment with a scalar
-  private void assign_frame_scalar(Frame dst, final int[] cols, Frame rows, final double src, Session ses) {
+  private void assign_frame_scalar(Frame dst, int[] cols, Frame rows, Object src, Session ses) {
     // TODO: COW without materializing vec and depending on assign_frame_frame
-    final byte[] outTypes = new byte[cols.length];
-    for (int i = 0; i < cols.length; i++) outTypes[i] = dst.types()[cols[i]];
-    Frame src2 = new MRTask() {
-      @Override
-      public void map(Chunk[] cs, NewChunk[] ncs) {
-        NewChunk.ChunkAppender[] appenders = new NewChunk.ChunkAppender[cols.length];
-        for (int i = 0; i < cols.length; i++) appenders[i] = ncs[i].createAppender(outTypes[i], src);
-        Chunk bool = cs[cs.length - 1];
-        for (int i = 0; i < cs[0]._len; ++i) {
-          int nc = 0;
-          if (bool.at8(i) == 1)
-            for (int ignored : cols) appenders[nc++].addDefault();
-          else
-            for (int c : cols) appenders[nc++].addFrom(cs[c], i);
-        }
+    Frame srcExtended = new ConditionalAssignTask(dst, cols, src).doAssign(rows);
+    assign_frame_frame(dst, cols, new AstNumList(0, dst.numRows()), srcExtended, ses);
+  }
+
+  private static class ConditionalAssignTask extends MRTask<ConditionalAssignTask> {
+
+    private final Frame _dst;
+    private final int[] _cols;
+    private final Object _value;
+    private final byte[] _outTypes;
+
+    private ConditionalAssignTask(Frame dst, int[] cols, Object value) {
+      _dst = dst;
+      _cols = cols;
+      _value = value;
+      _outTypes = new byte[cols.length];
+      for (int i = 0; i < cols.length; i++) _outTypes[i] = dst.types()[cols[i]];
+    }
+
+    @Override
+    public void map(Chunk[] cs, NewChunk[] ncs) {
+      NewChunk.ChunkAppender[] appenders = new NewChunk.ChunkAppender[_cols.length];
+      for (int i = 0; i < _cols.length; i++) {
+        Object defValue = (_outTypes[i] == Vec.T_UUID) ? UUID.fromString((String) _value) : _value;
+        appenders[i] = ncs[i].createAppender(_outTypes[i], defValue);
       }
-    }.doAll(outTypes, new Frame(dst).add(rows)).outputFrame();
-    assign_frame_frame(dst, cols, new AstNumList(0, dst.numRows()), src2, ses);
+      Chunk bool = cs[cs.length - 1];
+      for (int i = 0; i < cs[0]._len; ++i) {
+        int nc = 0;
+        if (bool.at8(i) == 1)
+          for (int ignored : _cols) appenders[nc++].addDefault();
+        else
+          for (int c : _cols) appenders[nc++].addFrom(cs[c], i);
+      }
+    }
+
+    private Frame doAssign(Frame predicateRows) {
+      return doAll(_outTypes, new Frame(_dst).add(predicateRows)).outputFrame();
+    }
+
   }
 
   private static abstract class RowSliceTask extends MRTask<RowSliceTask> {
