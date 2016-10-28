@@ -287,19 +287,23 @@ public class AstRectangleAssign extends AstPrimitive {
   // Boolean assignment with a scalar
   private void assign_frame_scalar(Frame dst, final int[] cols, Frame rows, final double src, Session ses) {
     // TODO: COW without materializing vec and depending on assign_frame_frame
+    final byte[] outTypes = new byte[cols.length];
+    for (int i = 0; i < cols.length; i++) outTypes[i] = dst.types()[cols[i]];
     Frame src2 = new MRTask() {
       @Override
       public void map(Chunk[] cs, NewChunk[] ncs) {
+        NewChunk.ChunkAppender[] appenders = new NewChunk.ChunkAppender[cols.length];
+        for (int i = 0; i < cols.length; i++) appenders[i] = ncs[i].createAppender(outTypes[i], src);
         Chunk bool = cs[cs.length - 1];
         for (int i = 0; i < cs[0]._len; ++i) {
           int nc = 0;
           if (bool.at8(i) == 1)
-            for (int ignored : cols) ncs[nc++].addNum(src);
+            for (int ignored : cols) appenders[nc++].addDefault();
           else
-            for (int c : cols) ncs[nc++].addNum(cs[c].atd(i));
+            for (int c : cols) appenders[nc++].addFrom(cs[c], i);
         }
       }
-    }.doAll(cols.length, Vec.T_NUM, new Frame(dst).add(rows)).outputFrame();
+    }.doAll(outTypes, new Frame(dst).add(rows)).outputFrame();
     assign_frame_frame(dst, cols, new AstNumList(0, dst.numRows()), src2, ses);
   }
 
