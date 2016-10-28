@@ -17,6 +17,7 @@ import water.rapids.ast.params.AstNumList;
 import water.rapids.ast.prims.mungers.AstColSlice;
 import water.rapids.vals.ValFrame;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -298,13 +299,13 @@ public class AstRectangleAssign extends AstPrimitive {
 
     private final Frame _dst;
     private final int[] _cols;
-    private final Object _value;
+    private final Serializable _value;
     private final byte[] _outTypes;
 
     private ConditionalAssignTask(Frame dst, int[] cols, Object value) {
       _dst = dst;
       _cols = cols;
-      _value = value;
+      _value = (Serializable) value;
       _outTypes = new byte[cols.length];
       for (int i = 0; i < cols.length; i++) _outTypes[i] = dst.types()[cols[i]];
     }
